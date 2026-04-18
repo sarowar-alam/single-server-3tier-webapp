@@ -1,7 +1,7 @@
-# BMI Health Tracker — Deployment Guide
+# BMI Health Tracker — Manual Deployment Guide
 
-> **Single source of truth** for deploying on AWS EC2 Ubuntu.
-> `IMPLEMENTATION_AUTO.sh` automates every step in this guide.
+> Complete step-by-step guide to deploy the BMI Health Tracker on AWS EC2 Ubuntu **without any automation scripts**.
+> Every step mirrors exactly what `IMPLEMENTATION_AUTO.sh` does internally.
 > For post-deploy updates use `AppUpdate_AUTO.sh`.
 
 ---
@@ -12,14 +12,18 @@
 2. [Prerequisites](#2-prerequisites)
 3. [Part A — AWS Console Setup](#part-a--aws-console-setup)
 4. [Part B — Server Bootstrap](#part-b--server-bootstrap)
-5. [Part C — Run the Deployment Script](#part-c--run-the-deployment-script)
-6. [What the Script Does — Step by Step](#what-the-script-does--step-by-step)
-7. [Script Options Reference](#script-options-reference)
-8. [Post-Deployment Verification](#post-deployment-verification)
-9. [SSL / HTTPS Setup](#ssl--https-setup)
-10. [Updating the Application](#updating-the-application)
-11. [Useful Day-2 Commands](#useful-day-2-commands)
-12. [Troubleshooting](#troubleshooting)
+5. [Step 1 — Install System Dependencies](#step-1--install-system-dependencies)
+6. [Step 2 — Setup Database](#step-2--setup-database)
+7. [Step 3 — Create Backend Runtime Directory and .env](#step-3--create-backend-runtime-directory-and-env)
+8. [Step 4 — Backup Existing Deployment](#step-4--backup-existing-deployment)
+9. [Step 5 — Deploy Backend](#step-5--deploy-backend)
+10. [Step 6 — Deploy Frontend](#step-6--deploy-frontend)
+11. [Step 7 — Configure PM2](#step-7--configure-pm2)
+12. [Step 8 — Configure Nginx](#step-8--configure-nginx)
+13. [Step 9 — SSL / HTTPS Setup (Optional)](#step-9--ssl--https-setup-optional)
+14. [Step 10 — Health Checks](#step-10--health-checks)
+15. [Useful Day-2 Commands](#useful-day-2-commands)
+16. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -35,6 +39,17 @@
 
 Traffic flow: `Browser → Nginx :80/:443 → /api/* proxy → Node :3000 → PostgreSQL`
 
+### Key paths used throughout this guide
+
+| Path | Purpose |
+|------|---------|
+| `~/single-server-3tier-webapp/` | Git repository (source of truth) |
+| `/opt/bmi-app/backend/` | Backend runtime directory |
+| `/var/www/bmi-health-tracker/` | Frontend static files served by Nginx |
+| `~/bmi_deployments_backup/` | Timestamped deployment backups |
+| `/etc/nginx/sites-available/bmi-health-tracker` | Nginx virtual host config |
+| `/opt/bmi-app/backend/.env` | DB credentials and server config |
+
 ---
 
 ## 2. Prerequisites
@@ -48,15 +63,6 @@ Traffic flow: `Browser → Nginx :80/:443 → /api/* proxy → Node :3000 → Po
 | Ubuntu 22.04 LTS instance | `t2.micro` or larger |
 | Security group rules | Ports 22, 80, 443 open inbound |
 | Domain (optional) | Required only for SSL — A record pointing to EC2 IP |
-
-### What the script installs automatically (if missing)
-
-- Node.js LTS via NVM
-- npm
-- PostgreSQL + postgresql-contrib
-- Nginx
-- PM2 (global npm package)
-- Certbot + python3-certbot-nginx (SSL only)
 
 ---
 
@@ -114,178 +120,487 @@ sudo apt install -y git curl wget unzip build-essential
 cd ~
 git clone https://github.com/sarowar-alam/single-server-3tier-webapp.git
 cd single-server-3tier-webapp
-
-# Make scripts executable
-chmod +x IMPLEMENTATION_AUTO.sh AppUpdate_AUTO.sh
 ```
 
 ---
 
-## Part C — Run the Deployment Script
+## Step 1 — Install System Dependencies
 
-### Standard deploy (no SSL)
-
-```bash
-./IMPLEMENTATION_AUTO.sh
-```
-
-### Fresh / clean install
+### 1.1 Install NVM and Node.js LTS
 
 ```bash
-./IMPLEMENTATION_AUTO.sh --fresh
+# Install NVM
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+
+# Load NVM into the current session
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+# Install Node.js LTS
+nvm install --lts
+nvm use --lts
+nvm alias default lts/*
+
+# Verify
+node -v   # e.g. v20.x.x
+npm -v    # e.g. 10.x.x
 ```
 
-### Deploy with SSL in one command
+> NVM is automatically added to `~/.bashrc` — it loads on every new SSH session.
+
+### 1.2 Install PostgreSQL
 
 ```bash
-./IMPLEMENTATION_AUTO.sh --with-ssl --domain=bmi.yourdomain.com
+sudo apt install -y postgresql postgresql-contrib
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+
+# Verify
+sudo systemctl status postgresql
 ```
 
-### Skip backup, no SSL
+### 1.3 Install Nginx
 
 ```bash
-./IMPLEMENTATION_AUTO.sh --skip-backup --skip-ssl
+sudo apt install -y nginx
+sudo systemctl start nginx
+sudo systemctl enable nginx
+
+# Verify
+sudo systemctl status nginx
 ```
 
-The script interactively prompts for:
+### 1.4 Install PM2
 
-1. `Continue with deployment? (y/n)`
-2. Database name (default: `bmidb`)
-3. Database user (default: `bmi_user`)
-4. Database password (must not be empty)
-5. Confirm password
-6. Domain name + Let's Encrypt email *(only if `--with-ssl` and no `--domain=` flag)*
+```bash
+npm install -g pm2
+
+# Verify
+pm2 -v
+```
 
 ---
 
-## What the Script Does — Step by Step
+## Step 2 — Setup Database
 
-| Step | Function | What happens |
-|------|----------|-------------|
-| 1 | `collect_database_credentials` | Prompts for DB name, user, password |
-| 2 | `check_prerequisites` | Loads NVM; installs Node.js, PostgreSQL, Nginx, PM2 if missing |
-| 3 | `setup_database` | Creates DB + user, grants privileges, adds md5 auth to `pg_hba.conf`, tests connection |
-| 4 | `create_backend_env` | Writes `backend/.env` with DB credentials and `NODE_ENV=production`; `chmod 600` |
-| 5 | `backup_current_deployment` | Backs up `.env`, deployed frontend, Nginx config, DB dump to `~/bmi_deployments_backup/` |
-| 6 | `deploy_backend` | `npm install --production`; runs all `migrations/*.sql` in order |
-| 7 | `deploy_frontend` | `npm install`; `npm run build`; copies `dist/` to `/var/www/bmi-health-tracker/`; sets `www-data` ownership |
-| 8 | `setup_pm2` | Stops any existing process; starts `src/server.js` as `bmi-backend`; `pm2 save`; configures systemd startup |
-| 9 | `configure_nginx` | Auto-detects EC2 public IP via IMDSv2; writes Nginx config with API proxy, gzip, security headers; restarts Nginx |
-| 10 | `setup_ssl_certificate` | *(if `--with-ssl`)* Installs Certbot; validates domain; runs `certbot --nginx`; tests auto-renewal |
-| 11 | `run_health_checks` | Tests backend API, PM2 status, frontend file presence, DB row count |
-| 12 | `display_summary` | Prints access URL, useful commands, backup path |
-
-### Files created by the script
-
-| Path | Purpose |
-|------|---------|
-| `/opt/bmi-app/backend/` | Backend runtime directory — source synced here from the git repo |
-| `/opt/bmi-app/backend/.env` | DB credentials, PORT, NODE_ENV — permissions `600` |
-| `/etc/nginx/sites-available/bmi-health-tracker` | Nginx virtual host config |
-| `/var/www/bmi-health-tracker/` | Built frontend static files served by Nginx |
-| `/etc/nginx/sites-enabled/bmi-health-tracker` | Symlink enabling the site |
-| `~/bmi_deployments_backup/deployment_TIMESTAMP/` | Timestamped backup (last 5 kept) |
-
----
-
-## Script Options Reference
-
-| Flag | Effect |
-|------|--------|
-| *(none)* | Standard interactive deploy |
-| `--fresh` | Removes `node_modules`, `package-lock.json`, `dist` before reinstalling |
-| `--skip-nginx` | Skips Nginx config (use when Nginx is already configured) |
-| `--skip-backup` | Skips creating a backup before deploy |
-| `--with-ssl` | Enables Let's Encrypt SSL certificate installation |
-| `--skip-ssl` | Suppresses SSL prompt entirely |
-| `--domain=example.com` | Pre-sets domain for SSL, avoids interactive prompt |
-| `--help` | Prints usage and exits |
-
----
-
-## Post-Deployment Verification
+### 2.1 Create the database user and database
 
 ```bash
-# Backend process is online
-pm2 status
+# Create application user with password
+sudo -u postgres psql -c "CREATE USER bmi_user WITH PASSWORD 'your_password';"
 
-# Backend responds directly
-curl -s http://localhost:3000/api/measurements | head -c 100
+# Create the database
+sudo -u postgres psql -c "CREATE DATABASE bmidb;"
 
-# Nginx is serving frontend (expect: 200)
-curl -s -o /dev/null -w "%{http_code}" http://localhost/
+# Grant full privileges on the database
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE bmidb TO bmi_user;"
 
-# API proxy through Nginx works (expect: 200)
-curl -s -o /dev/null -w "%{http_code}" http://localhost/api/measurements
+# Grant schema privileges (needed for PostgreSQL 15+)
+sudo -u postgres psql -d bmidb -c "GRANT ALL ON SCHEMA public TO bmi_user;"
+sudo -u postgres psql -d bmidb -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO bmi_user;"
+```
 
-# Database schema
-PGPASSWORD=<your_password> psql -U bmi_user -d bmidb -h localhost \
+> Replace `your_password` with your chosen password. Use the same value everywhere in this guide.
+
+### 2.2 Configure PostgreSQL password authentication
+
+```bash
+# Find the pg_hba.conf file path
+PG_HBA=$(sudo -u postgres psql -t -P format=unaligned -c 'SHOW hba_file')
+echo $PG_HBA
+# Typically: /etc/postgresql/14/main/pg_hba.conf
+
+# Backup before editing
+sudo cp "$PG_HBA" "${PG_HBA}.backup"
+
+# Add md5 auth rule for bmi_user on bmidb
+sudo sed -i "/^# IPv4 local connections:/a host    bmidb    bmi_user    127.0.0.1/32    md5" "$PG_HBA"
+
+# Reload PostgreSQL to apply
+sudo systemctl reload postgresql
+```
+
+### 2.3 Test the connection
+
+```bash
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost -c "SELECT 1;"
+# Expected: (1 row)
+# If this fails, check Step 2.2 and that the password matches
+```
+
+---
+
+## Step 3 — Create Backend Runtime Directory and .env
+
+### 3.1 Create the runtime directory
+
+```bash
+# Create /opt/bmi-app/backend and give the current user ownership
+sudo mkdir -p /opt/bmi-app/backend
+sudo chown -R $USER:$USER /opt/bmi-app
+```
+
+### 3.2 Create the .env file
+
+```bash
+cat > /opt/bmi-app/backend/.env << EOF
+# Database Configuration
+DATABASE_URL=postgresql://bmi_user:your_password@localhost:5432/bmidb
+
+# Alternative individual settings
+DB_USER=bmi_user
+DB_PASSWORD=your_password
+DB_NAME=bmidb
+DB_HOST=localhost
+DB_PORT=5432
+
+# Server Configuration
+PORT=3000
+NODE_ENV=production
+
+# CORS Configuration (update with your domain if needed)
+CORS_ORIGIN=*
+EOF
+
+# Restrict permissions — readable only by the current user
+chmod 600 /opt/bmi-app/backend/.env
+
+# Verify content
+cat /opt/bmi-app/backend/.env
+```
+
+> Replace `your_password` with the same password used in Step 2.
+
+---
+
+## Step 4 — Backup Existing Deployment
+
+*Skip on a fresh server where nothing is deployed yet.*
+
+```bash
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_PATH="$HOME/bmi_deployments_backup/deployment_$TIMESTAMP"
+mkdir -p "$BACKUP_PATH"
+
+# Backup backend .env (credentials must survive redeploys)
+cp /opt/bmi-app/backend/.env "$BACKUP_PATH/" 2>/dev/null || echo "No .env to backup"
+
+# Backup deployed frontend
+sudo cp -r /var/www/bmi-health-tracker "$BACKUP_PATH/frontend_deployed" 2>/dev/null || echo "No frontend to backup"
+
+# Backup Nginx config
+sudo cp /etc/nginx/sites-available/bmi-health-tracker "$BACKUP_PATH/" 2>/dev/null || echo "No Nginx config to backup"
+
+# Backup database
+PGPASSWORD=your_password pg_dump -U bmi_user -h localhost bmidb \
+  > "$BACKUP_PATH/database_backup.sql" 2>/dev/null || echo "Database backup skipped"
+
+echo "Backup saved to: $BACKUP_PATH"
+
+# Keep only the last 5 backups — remove older ones
+cd "$HOME/bmi_deployments_backup"
+ls -t | tail -n +6 | xargs -r rm -rf
+```
+
+---
+
+## Step 5 — Deploy Backend
+
+### 5.1 Sync backend source from git repo to runtime directory
+
+```bash
+# rsync copies backend/ into /opt/bmi-app/backend/
+# --exclude ensures .env, node_modules, and logs are never overwritten
+rsync -a \
+  --exclude 'node_modules' \
+  --exclude '.env' \
+  --exclude 'logs' \
+  ~/single-server-3tier-webapp/backend/ \
+  /opt/bmi-app/backend/
+
+# Confirm .env is still present (rsync must NOT have removed it)
+ls -la /opt/bmi-app/backend/.env
+```
+
+### 5.2 Install backend dependencies
+
+```bash
+cd /opt/bmi-app/backend
+npm install --production
+```
+
+### 5.3 Run database migrations in order
+
+```bash
+cd /opt/bmi-app/backend
+
+# Migration 001 — creates the measurements table
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost \
+  -f migrations/001_create_measurements.sql
+
+# Migration 002 — adds measurement_date column
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost \
+  -f migrations/002_add_measurement_date.sql
+
+# Verify the final table structure
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost \
   -c "\d measurements"
+```
 
-# Open in browser
-# http://<EC2-PUBLIC-IP>
+### 5.4 Confirm database connection from the runtime directory
+
+```bash
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost -c "SELECT 1;"
+# Must return: (1 row) — if not, stop and fix Step 2 before continuing
 ```
 
 ---
 
-## SSL / HTTPS Setup
+## Step 6 — Deploy Frontend
 
-### Option 1 — during initial deployment
+### 6.1 Build the React app
 
 ```bash
-./IMPLEMENTATION_AUTO.sh --with-ssl --domain=bmi.yourdomain.com
+cd ~/single-server-3tier-webapp/frontend
+npm install
+npm run build
+
+# Verify the build output exists
+ls -la dist/
+# Must show index.html — if missing, the build failed
 ```
 
-### Option 2 — after initial deployment
+### 6.2 Copy the build to the Nginx directory
 
 ```bash
-# Install Certbot
-sudo apt install -y certbot python3-certbot-nginx
+sudo mkdir -p /var/www/bmi-health-tracker
 
-# Update Nginx config with your domain
-sudo sed -i "s/server_name .*/server_name bmi.yourdomain.com;/" \
+# Remove stale files and deploy the fresh build
+sudo rm -rf /var/www/bmi-health-tracker/*
+sudo cp -r dist/* /var/www/bmi-health-tracker/
+
+# Set correct ownership and permissions for Nginx
+sudo chown -R www-data:www-data /var/www/bmi-health-tracker
+sudo chmod -R 755 /var/www/bmi-health-tracker
+
+# Critical check — missing index.html causes a 500 redirect loop in Nginx
+ls -la /var/www/bmi-health-tracker/
+# Must show index.html
+```
+
+---
+
+## Step 7 — Configure PM2
+
+### 7.1 Stop any existing bmi-backend process
+
+```bash
+pm2 stop bmi-backend 2>/dev/null || true
+pm2 delete bmi-backend 2>/dev/null || true
+```
+
+### 7.2 Start the backend with PM2
+
+```bash
+cd /opt/bmi-app/backend
+pm2 start src/server.js --name bmi-backend --env production
+
+# Verify — status must show: online
+pm2 status
+```
+
+### 7.3 Save the PM2 process list
+
+```bash
+pm2 save
+```
+
+### 7.4 Configure PM2 to auto-start on server reboot
+
+```bash
+# Generate the systemd startup command
+pm2 startup systemd -u ubuntu --hp /home/ubuntu
+
+# PM2 prints a command like:
+#   sudo env PATH=$PATH:/home/ubuntu/.nvm/versions/node/vXX.X.X/bin ...
+# Copy that exact command and run it, then save again:
+pm2 save
+
+# Verify
+sudo systemctl status pm2-ubuntu
+```
+
+---
+
+## Step 8 — Configure Nginx
+
+### 8.1 Get your EC2 public IP
+
+```bash
+# IMDSv2 (AWS recommended method)
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+EC2_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4)
+echo $EC2_IP
+```
+
+### 8.2 Write the Nginx configuration
+
+Replace `YOUR_SERVER_NAME` with the IP printed above, or your domain name.
+
+```bash
+sudo tee /etc/nginx/sites-available/bmi-health-tracker > /dev/null << 'EOF'
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name YOUR_SERVER_NAME;
+
+    # Frontend static files
+    root /var/www/bmi-health-tracker;
+    index index.html;
+
+    # Compression
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript
+               application/x-javascript application/xml+rss
+               application/javascript application/json;
+
+    # Frontend routing — serves index.html for all React Router paths
+    location / {
+        try_files $uri $uri/ /index.html;
+
+        # Cache static assets for 1 year
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+
+    # API reverse proxy — forwards /api/* to Node.js on port 3000
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000/api/;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+
+    server_tokens off;
+
+    access_log /var/log/nginx/bmi-access.log;
+    error_log /var/log/nginx/bmi-error.log;
+}
+EOF
+```
+
+### 8.3 Enable the site and restart Nginx
+
+```bash
+# Enable site via symlink
+sudo ln -sf /etc/nginx/sites-available/bmi-health-tracker \
+            /etc/nginx/sites-enabled/bmi-health-tracker
+
+# Remove the default Nginx placeholder site
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# Test configuration syntax — must pass before restarting
+sudo nginx -t
+
+# Restart Nginx and enable on boot
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+
+# Verify
+sudo systemctl status nginx
+```
+
+---
+
+## Step 9 — SSL / HTTPS Setup (Optional)
+
+> **Requirement**: domain A record must resolve to the EC2 public IP **before** running Certbot.
+> Let's Encrypt validates ownership via HTTP on port 80.
+
+### 9.1 Install Certbot
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
+```
+
+### 9.2 Update the Nginx server_name with your domain
+
+```bash
+sudo sed -i "s/server_name .*/server_name yourdomain.com;/" \
   /etc/nginx/sites-available/bmi-health-tracker
 sudo nginx -t && sudo systemctl reload nginx
-
-# Request certificate (handles Nginx config update + HTTP redirect automatically)
-sudo certbot --nginx -d bmi.yourdomain.com
 ```
 
-### Auto-renewal
+### 9.3 Request the certificate
 
-Certbot installs a systemd timer automatically. Verify it works:
+```bash
+# --redirect automatically configures HTTP → HTTPS redirect
+sudo certbot --nginx -d yourdomain.com \
+  --non-interactive --agree-tos \
+  --email your@email.com \
+  --redirect
+```
+
+### 9.4 Verify auto-renewal
 
 ```bash
 sudo certbot renew --dry-run
 sudo systemctl status certbot.timer
 ```
 
-> **DNS requirement**: domain A record must resolve to the EC2 public IP before running Certbot. Let's Encrypt validation will fail otherwise.
-
 ---
 
-## Updating the Application
-
-Use `AppUpdate_AUTO.sh` for all subsequent code updates.
-**Do not re-run** `IMPLEMENTATION_AUTO.sh` — it will overwrite your `.env` and Nginx config.
+## Step 10 — Health Checks
 
 ```bash
-cd ~/single-server-3tier-webapp
+# Give services 3 seconds to stabilise
+sleep 3
 
-# Update both frontend + backend (default)
-./AppUpdate_AUTO.sh
+# 1. Backend API responds directly on port 3000
+curl -f http://localhost:3000/api/measurements
+# Expected: JSON array (empty [] on fresh install is correct)
 
-# Backend only
-./AppUpdate_AUTO.sh --backend-only
+# 2. Nginx serves the frontend (expect: 200)
+curl -s -o /dev/null -w "%{http_code}" http://localhost/
 
-# Frontend only
-./AppUpdate_AUTO.sh --frontend-only
+# 3. API proxy through Nginx works (expect: 200)
+curl -s -o /dev/null -w "%{http_code}" http://localhost/api/measurements
 
-# Skip backup (faster)
-./AppUpdate_AUTO.sh --no-backup
+# 4. PM2 process is online
+pm2 status
+# bmi-backend row must show: online
+
+# 5. Database row count
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost \
+  -tAc "SELECT COUNT(*) FROM measurements;"
+
+# 6. Open in browser
+# http://<EC2-PUBLIC-IP>
 ```
-
-The update script: pulls from GitHub → backs up → reinstalls dependencies → restarts PM2 → rebuilds frontend → deploys to Nginx → runs health checks.
 
 ---
 
@@ -333,7 +648,7 @@ free -h                              # Memory usage
 
 ### `SASL: client password must be a string`
 
-`DB_PASSWORD` in `backend/.env` is empty or missing.
+`DB_PASSWORD` in `/opt/bmi-app/backend/.env` is empty or missing.
 
 ```bash
 nano /opt/bmi-app/backend/.env
@@ -356,21 +671,37 @@ sudo systemctl enable postgresql
 
 ### Nginx 502 Bad Gateway
 
-Backend is down. Check:
+Backend is down.
 
 ```bash
 pm2 status
 pm2 logs bmi-backend --lines 20
+# If stopped:
+cd /opt/bmi-app/backend
+pm2 start src/server.js --name bmi-backend --env production
 ```
 
 ---
 
 ### Nginx 404 on React frontend routes
 
-The `try_files` directive is missing. Verify:
+The `try_files` directive is missing from the Nginx config.
 
 ```bash
 sudo grep "try_files" /etc/nginx/sites-available/bmi-health-tracker
+```
+
+If missing, re-do Step 8.
+
+---
+
+### Nginx rewrite/redirection cycle (500 error)
+
+`index.html` is missing from `/var/www/bmi-health-tracker/` — Nginx loops trying to serve it.
+
+```bash
+ls -la /var/www/bmi-health-tracker/
+# If empty or missing index.html — re-run Step 6
 ```
 
 ---
@@ -378,9 +709,9 @@ sudo grep "try_files" /etc/nginx/sites-available/bmi-health-tracker
 ### Re-run migrations (idempotent — safe to re-apply)
 
 ```bash
-PGPASSWORD=<pw> psql -U bmi_user -d bmidb -h localhost \
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost \
   -f /opt/bmi-app/backend/migrations/001_create_measurements.sql
-PGPASSWORD=<pw> psql -U bmi_user -d bmidb -h localhost \
+PGPASSWORD=your_password psql -U bmi_user -d bmidb -h localhost \
   -f /opt/bmi-app/backend/migrations/002_add_measurement_date.sql
 ```
 
@@ -390,7 +721,7 @@ PGPASSWORD=<pw> psql -U bmi_user -d bmidb -h localhost \
 
 ```bash
 pm2 startup systemd -u ubuntu --hp /home/ubuntu
-# Copy and run the command it prints, then:
+# Copy and run the exact command it prints, then:
 pm2 save
 ```
 
@@ -398,14 +729,14 @@ pm2 save
 
 ### SSL certificate request fails
 
-- Verify DNS resolves: `nslookup yourdomain.com` → must return EC2 public IP
+- Verify DNS: `nslookup yourdomain.com` — must return EC2 public IP
 - Verify ports 80 and 443 are open in the EC2 Security Group
 - Check Certbot logs: `sudo journalctl -u certbot`
 
 ---
 
 **Last Updated**: April 18, 2026
-**Version**: 4.0
+**Version**: 4.1
 **Replaces**: IMPLEMENTATION_GUIDE.md (v2.1) + IMPLEMENTATION_GUIDE_ORDER.md (v3.0)
 
 ---
