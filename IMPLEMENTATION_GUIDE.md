@@ -1,9 +1,427 @@
+# BMI Health Tracker ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Deployment Guide
 
-# BMI & Health Tracker — AWS Ubuntu EC2 Deployment Guide
+> **Single source of truth** for deploying on AWS EC2 Ubuntu.  
+> `IMPLEMENTATION_AUTO.sh` automates every step in this guide.  
+> For post-deploy updates use `AppUpdate_AUTO.sh`.
+
+---
+
+## Table of Contents
+
+1. [Application Overview](#1-application-overview)
+2. [Prerequisites](#2-prerequisites)
+3. [Part A ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â AWS Console Setup](#part-a--aws-console-setup)
+4. [Part B ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Server Bootstrap](#part-b--server-bootstrap)
+5. [Part C ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Run the Deployment Script](#part-c--run-the-deployment-script)
+6. [What the Script Does ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Step by Step](#what-the-script-does--step-by-step)
+7. [Script Options Reference](#script-options-reference)
+8. [Post-Deployment Verification](#post-deployment-verification)
+9. [SSL / HTTPS Setup](#ssl--https-setup)
+10. [Updating the Application](#updating-the-application)
+11. [Useful Day-2 Commands](#useful-day-2-commands)
+12. [Troubleshooting](#troubleshooting)
+
+---
+
+## 1. Application Overview
+
+**BMI Health Tracker** ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â a 3-tier full-stack web application.
+
+| Layer    | Technology                     | Runs on        |
+|----------|--------------------------------|----------------|
+| Frontend | React 18 + Vite 5 + Chart.js 4 | Nginx (static) |
+| Backend  | Node.js 18 LTS + Express 4     | PM2 port 3000  |
+| Database | PostgreSQL 14                  | localhost:5432 |
+
+Traffic flow: `Browser ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Nginx :80/:443 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ /api/* proxy ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Node :3000 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ PostgreSQL`
+
+---
+
+## 2. Prerequisites
+
+### What you need before starting
+
+| Item | Detail |
+|------|--------|
+| AWS account | EC2 launch permissions |
+| EC2 key pair | `.pem` file on your local machine |
+| Ubuntu 22.04 LTS instance | `t2.micro` or larger |
+| Security group rules | Ports 22, 80, 443 open inbound |
+| Domain (optional) | Required only for SSL ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â A record pointing to EC2 IP |
+
+### What the script installs automatically (if missing)
+
+- Node.js LTS via NVM
+- npm
+- PostgreSQL + postgresql-contrib
+- Nginx
+- PM2 (global npm package)
+- Certbot + python3-certbot-nginx (SSL only)
+
+---
+
+## Part A ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â AWS Console Setup
+
+*Do this once in the AWS Console before SSHing to the server.*
+
+### A.1 Launch EC2 Instance
+
+1. Go to **EC2 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Launch Instance**
+2. Name: `bmi-health-tracker`
+3. AMI: **Ubuntu Server 22.04 LTS (HVM), SSD Volume Type**
+4. Instance type: `t2.micro` (free tier) or `t3.small`
+5. Key pair: select or create a `.pem` key pair ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â save it securely
+6. Storage: 20 GB gp3
+7. Click **Launch Instance**
+
+### A.2 Configure Security Group
+
+| Type  | Protocol | Port | Source    | Purpose         |
+|-------|----------|------|-----------|-----------------|
+| SSH   | TCP      | 22   | Your IP   | Admin access    |
+| HTTP  | TCP      | 80   | 0.0.0.0/0 | Web traffic     |
+| HTTPS | TCP      | 443  | 0.0.0.0/0 | SSL web traffic |
+
+### A.3 (Optional) Elastic IP
+
+Assign a static IP so it does not change after reboots:  
+**EC2 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Elastic IPs ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Allocate ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Associate ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ select your instance**
+
+### A.4 Connect via SSH
+
+```bash
+# Set key permissions (first time only)
+chmod 400 your-key.pem
+
+# Connect
+ssh -i your-key.pem ubuntu@<EC2-PUBLIC-IP>
+```
+
+---
+
+## Part B ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Server Bootstrap
+
+*Run once on the server immediately after first SSH login.*
+
+```bash
+# Update packages
+sudo apt update && sudo apt upgrade -y
+
+# Install essential tools
+sudo apt install -y git curl wget unzip build-essential
+
+# Clone the repository
+cd ~
+git clone https://github.com/sarowar-alam/single-server-3tier-webapp.git
+cd single-server-3tier-webapp
+
+# Make scripts executable
+chmod +x IMPLEMENTATION_AUTO.sh AppUpdate_AUTO.sh
+```
+
+---
+
+## Part C ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Run the Deployment Script
+
+### Standard deploy (no SSL)
+
+```bash
+./IMPLEMENTATION_AUTO.sh
+```
+
+### Fresh / clean install
+
+```bash
+./IMPLEMENTATION_AUTO.sh --fresh
+```
+
+### Deploy with SSL in one command
+
+```bash
+./IMPLEMENTATION_AUTO.sh --with-ssl --domain=bmi.yourdomain.com
+```
+
+### Skip backup, no SSL
+
+```bash
+./IMPLEMENTATION_AUTO.sh --skip-backup --skip-ssl
+```
+
+The script interactively prompts for:
+
+1. Database name (default: `bmidb`)
+2. Database user (default: `bmi_user`)
+3. Database password (must not be empty)
+4. Confirm password
+5. `Continue with deployment? (y/n)`
+6. Domain name + Let's Encrypt email *(only if `--with-ssl` and no `--domain=` flag)*
+
+---
+
+## What the Script Does ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Step by Step
+
+| Step | Function | What happens |
+|------|----------|-------------|
+| 1 | `collect_database_credentials` | Prompts for DB name, user, password |
+| 2 | `check_prerequisites` | Loads NVM; installs Node.js, PostgreSQL, Nginx, PM2 if missing |
+| 3 | `setup_database` | Creates DB + user, grants privileges, adds md5 auth to `pg_hba.conf`, tests connection |
+| 4 | `create_backend_env` | Writes `backend/.env` with DB credentials and `NODE_ENV=production`; `chmod 600` |
+| 5 | `backup_current_deployment` | Backs up `.env`, deployed frontend, Nginx config, DB dump to `~/bmi_deployments_backup/` |
+| 6 | `deploy_backend` | `npm install --production`; runs all `migrations/*.sql` in order |
+| 7 | `deploy_frontend` | `npm install`; `npm run build`; copies `dist/` to `/var/www/bmi-health-tracker/`; sets `www-data` ownership |
+| 8 | `setup_pm2` | Stops any existing process; starts `src/server.js` as `bmi-backend`; `pm2 save`; configures systemd startup |
+| 9 | `configure_nginx` | Auto-detects EC2 public IP via IMDSv2; writes Nginx config with API proxy, gzip, security headers; reloads |
+| 10 | `setup_ssl_certificate` | *(if `--with-ssl`)* Installs Certbot; validates domain; runs `certbot --nginx`; tests auto-renewal |
+| 11 | `run_health_checks` | Tests backend API, PM2 status, frontend file presence, DB row count |
+| 12 | `display_summary` | Prints access URL, useful commands, backup path |
+
+### Files created by the script
+
+| Path | Purpose |
+|------|---------|
+| `/opt/bmi-app/backend/` | Backend runtime directory â€” source synced here from the git repo |
+| `/opt/bmi-app/backend/.env` | DB credentials, PORT, NODE_ENV â€” permissions `600` |
+| `/etc/nginx/sites-available/bmi-health-tracker` | Nginx virtual host config |
+| `/var/www/bmi-health-tracker/` | Built frontend static files served by Nginx |
+| `/etc/nginx/sites-enabled/bmi-health-tracker` | Symlink enabling the site |
+| `~/bmi_deployments_backup/deployment_TIMESTAMP/` | Timestamped backup (last 5 kept) |
+
+---
+
+## Script Options Reference
+
+| Flag | Effect |
+|------|--------|
+| *(none)* | Standard interactive deploy |
+| `--fresh` | Removes `node_modules`, `package-lock.json`, `dist` before reinstalling |
+| `--skip-nginx` | Skips Nginx config (use when Nginx is already configured) |
+| `--skip-backup` | Skips creating a backup before deploy |
+| `--with-ssl` | Enables Let's Encrypt SSL certificate installation |
+| `--skip-ssl` | Suppresses SSL prompt entirely |
+| `--domain=example.com` | Pre-sets domain for SSL, avoids interactive prompt |
+| `--help` | Prints usage and exits |
+
+---
+
+## Post-Deployment Verification
+
+```bash
+# Backend process is online
+pm2 status
+
+# Backend responds directly
+curl -s http://localhost:3000/api/measurements | head -c 100
+
+# Nginx is serving frontend (expect: 200)
+curl -s -o /dev/null -w "%{http_code}" http://localhost/
+
+# API proxy through Nginx works (expect: 200)
+curl -s -o /dev/null -w "%{http_code}" http://localhost/api/measurements
+
+# Database schema
+PGPASSWORD=<your_password> psql -U bmi_user -d bmidb -h localhost \
+  -c "\d measurements"
+
+# Open in browser
+# http://<EC2-PUBLIC-IP>
+```
+
+---
+
+## SSL / HTTPS Setup
+
+### Option 1 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â during initial deployment
+
+```bash
+./IMPLEMENTATION_AUTO.sh --with-ssl --domain=bmi.yourdomain.com
+```
+
+### Option 2 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â after initial deployment
+
+```bash
+# Install Certbot
+sudo apt install -y certbot python3-certbot-nginx
+
+# Update Nginx config with your domain
+sudo sed -i "s/server_name .*/server_name bmi.yourdomain.com;/" \
+  /etc/nginx/sites-available/bmi-health-tracker
+sudo nginx -t && sudo systemctl reload nginx
+
+# Request certificate (handles Nginx config update + HTTP redirect automatically)
+sudo certbot --nginx -d bmi.yourdomain.com
+```
+
+### Auto-renewal
+
+Certbot installs a systemd timer automatically. Verify it works:
+
+```bash
+sudo certbot renew --dry-run
+sudo systemctl status certbot.timer
+```
+
+> **DNS requirement**: domain A record must resolve to the EC2 public IP before running Certbot. Let's Encrypt validation will fail otherwise.
+
+---
+
+## Updating the Application
+
+Use `AppUpdate_AUTO.sh` for all subsequent code updates.  
+**Do not re-run** `IMPLEMENTATION_AUTO.sh` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â it will overwrite your `.env` and Nginx config.
+
+```bash
+cd ~/single-server-3tier-webapp
+
+# Update both frontend + backend (default)
+./AppUpdate_AUTO.sh
+
+# Backend only
+./AppUpdate_AUTO.sh --backend-only
+
+# Frontend only
+./AppUpdate_AUTO.sh --frontend-only
+
+# Skip backup (faster)
+./AppUpdate_AUTO.sh --no-backup
+```
+
+The update script: pulls from GitHub ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ backs up ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ reinstalls dependencies ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ restarts PM2 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ rebuilds frontend ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ deploys to Nginx ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ runs health checks.
+
+---
+
+## Useful Day-2 Commands
+
+```bash
+# --- PM2 / Backend ---
+pm2 status                           # Show all processes
+pm2 logs bmi-backend                 # Stream logs live
+pm2 logs bmi-backend --lines 50      # Last 50 lines
+pm2 restart bmi-backend              # Restart
+pm2 reload bmi-backend               # Zero-downtime reload
+pm2 stop bmi-backend                 # Stop
+
+# --- Nginx ---
+sudo nginx -t                        # Test config syntax
+sudo systemctl reload nginx          # Reload config (no downtime)
+sudo systemctl restart nginx         # Full restart
+sudo tail -f /var/log/nginx/bmi-error.log
+sudo tail -f /var/log/nginx/bmi-access.log
+
+# --- PostgreSQL ---
+sudo systemctl status postgresql
+psql -U bmi_user -d bmidb -h localhost   # App user shell (prompts password)
+sudo -u postgres psql                    # Admin shell
+
+# --- SSL ---
+sudo certbot certificates            # Show cert status and expiry
+sudo certbot renew                   # Force renewal
+sudo certbot renew --dry-run         # Test renewal without changes
+
+# --- Firewall ---
+sudo ufw status
+sudo ufw allow 'Nginx Full'
+sudo ufw allow OpenSSH
+
+# --- System ---
+df -h                                # Disk usage
+free -h                              # Memory usage
+```
+
+---
+
+## Troubleshooting
+
+### `SASL: client password must be a string`
+
+`DB_PASSWORD` in `backend/.env` is empty or missing.
+
+```bash
+nano /opt/bmi-app/backend/.env
+# Set: DB_PASSWORD=yourpassword
+pm2 restart bmi-backend
+```
+
+---
+
+### `ECONNREFUSED 127.0.0.1:5432`
+
+PostgreSQL is not running.
+
+```bash
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
+```
+
+---
+
+### Nginx 502 Bad Gateway
+
+Backend is down. Check:
+
+```bash
+pm2 status
+pm2 logs bmi-backend --lines 20
+```
+
+---
+
+### Nginx 404 on React frontend routes
+
+The `try_files` directive is missing. Verify:
+
+```bash
+sudo grep "try_files" /etc/nginx/sites-available/bmi-health-tracker
+```
+
+---
+
+### Re-run migrations (idempotent ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â safe to re-apply)
+
+```bash
+PGPASSWORD=<pw> psql -U bmi_user -d bmidb -h localhost \
+  -f /opt/bmi-app/backend/migrations/001_create_measurements.sql
+PGPASSWORD=<pw> psql -U bmi_user -d bmidb -h localhost \
+  -f /opt/bmi-app/backend/migrations/002_add_measurement_date.sql
+```
+
+---
+
+### PM2 not auto-starting after reboot
+
+```bash
+pm2 startup systemd -u ubuntu --hp /home/ubuntu
+# Copy and run the command it prints, then:
+pm2 save
+```
+
+---
+
+### SSL certificate request fails
+
+- Verify DNS resolves: `nslookup yourdomain.com` ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ must return EC2 public IP
+- Verify ports 80 and 443 are open in the EC2 Security Group
+- Check Certbot logs: `sudo journalctl -u certbot`
+
+---
+
+**Last Updated**: April 18, 2026  
+**Version**: 4.0  
+**Replaces**: IMPLEMENTATION_GUIDE.md (v2.1) + IMPLEMENTATION_GUIDE_ORDER.md (v3.0)
+
+---
+
+*MD Sarowar Alam*  
+Lead DevOps Engineer, WPP Production  
+ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â§ Email: sarowar@hotmail.com  
+ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬â€ LinkedIn: https://www.linkedin.com/in/sarowar/
+
+---
+
+# BMI & Health Tracker ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â AWS Ubuntu EC2 Deployment Guide
 
 This comprehensive guide walks you through deploying the **BMI & Health Tracker** full-stack application (React + Node.js + PostgreSQL) on a **fresh AWS Ubuntu EC2 server** using **Nginx** as a reverse proxy and static file server.
 
-## 🌟 Application Features
+## ÃƒÂ°Ã…Â¸Ã…â€™Ã…Â¸ Application Features
 
 - **Health Metrics Calculation**: BMI, BMR (using Mifflin-St Jeor equation), and daily calorie needs
 - **Custom Measurement Dates**: Track measurements with specific dates (not just "now") - great for historical data
@@ -27,7 +445,7 @@ This comprehensive guide walks you through deploying the **BMI & Health Tracker*
 
 ### 1.1 Launch EC2 Instance
 
-1. **Sign in to AWS Console** → Navigate to EC2 Dashboard
+1. **Sign in to AWS Console** ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Navigate to EC2 Dashboard
 2. **Click "Launch Instance"**
 3. **Configure Instance:**
    - **Name**: `bmi-health-tracker-server`
@@ -191,7 +609,7 @@ cd bmi-health-tracker
 ### 4.2 Setup Backend
 
 ```bash
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 
 # Create environment file from example
 cp .env.example .env
@@ -286,7 +704,7 @@ npm install -g pm2
 ### 5.2 Start Backend with PM2
 
 ```bash
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 
 # Start the backend server
 pm2 start src/server.js --name bmi-backend
@@ -580,18 +998,18 @@ Open browser and navigate to:
 - `https://YOUR_DOMAIN` (if SSL configured)
 
 **Check these features:**
-1. ✅ Form displays with all 6 input fields:
+1. ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Form displays with all 6 input fields:
    - **Measurement Date** (new feature! allows entering historical data)
    - Weight (kg)
    - Height (cm)
    - Age (years)
    - Biological Sex
    - Activity Level
-2. ✅ Submit a measurement (defaults to today's date, but you can change it)
-3. ✅ Measurement appears in the recent list with the specified date
-4. ✅ Stats cards display current BMI, BMR, and daily calorie needs
-5. ✅ Trend chart displays (shows 30-day BMI trends)
-6. ✅ Check browser console for errors (F12)
+2. ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Submit a measurement (defaults to today's date, but you can change it)
+3. ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Measurement appears in the recent list with the specified date
+4. ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Stats cards display current BMI, BMR, and daily calorie needs
+5. ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Trend chart displays (shows 30-day BMI trends)
+6. ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Check browser console for errors (F12)
 
 **Test the measurement date feature:**
 - Try entering a measurement from a past date (e.g., last week)
@@ -701,7 +1119,7 @@ sudo systemctl status postgresql
 psql -U bmi_user -d bmidb -h localhost
 
 # Check backend .env file has correct DATABASE_URL
-cat /home/ubuntu/single-server-3tier-webapp/backend/.env
+cat /opt/bmi-app/backend/.env
 ```
 
 **Issue: Nginx 502 Bad Gateway**
@@ -753,7 +1171,7 @@ sudo tail -50 /var/log/nginx/bmi-error.log
 psql -U bmi_user -d bmidb -h localhost -c "\d measurements" | grep measurement_date
 
 # If column is missing, run migration 002:
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 psql -U bmi_user -d bmidb -h localhost -f migrations/002_add_measurement_date.sql
 
 # Restart backend
@@ -776,7 +1194,7 @@ sudo chown -R www-data:www-data /var/www/bmi-health-tracker
 **Problem: Backend not accepting measurementDate field**
 ```bash
 # Check backend code is current
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 grep -r "measurementDate" src/routes.js
 
 # If not found, ensure you have the latest code
@@ -852,38 +1270,38 @@ After successful deployment, your server structure looks like:
 
 ```
 /home/ubuntu/
-├── bmi-health-tracker/
-│   ├── backend/
-│   │   ├── src/
-│   │   │   ├── server.js
-│   │   │   ├── routes.js
-│   │   │   ├── db.js
-│   │   │   └── calculations.js
-│   │   ├── migrations/
-│   │   │   └── 001_create_measurements.sql
-│   │   ├── .env                    # Environment variables
-│   │   ├── package.json
-│   │   └── node_modules/
-│   └── frontend/
-│       ├── dist/                   # Build output (copied to /var/www)
-│       ├── src/
-│       ├── package.json
-│       └── node_modules/
-│
+ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ bmi-health-tracker/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ backend/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ src/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ server.js
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ routes.js
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ db.js
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ calculations.js
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ migrations/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ 001_create_measurements.sql
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ .env                    # Environment variables
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ package.json
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ node_modules/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ frontend/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡       ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ dist/                   # Build output (copied to /var/www)
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡       ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ src/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡       ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ package.json
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡       ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ node_modules/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡
 /var/www/bmi-health-tracker/        # Production frontend files
-├── index.html
-├── assets/
-│   ├── index-[hash].js
-│   └── index-[hash].css
-└── ...
+ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ index.html
+ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ assets/
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ index-[hash].js
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬Å¡   ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ index-[hash].css
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ ...
 
 /etc/nginx/
-└── sites-available/
-    └── bmi-health-tracker          # Nginx configuration
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ sites-available/
+    ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ bmi-health-tracker          # Nginx configuration
 
 /var/log/nginx/
-├── bmi-access.log                  # Access logs
-└── bmi-error.log                   # Error logs
+ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ bmi-access.log                  # Access logs
+ÃƒÂ¢Ã¢â‚¬ÂÃ¢â‚¬ÂÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ bmi-error.log                   # Error logs
 ```
 
 ---
@@ -924,7 +1342,7 @@ Ensure your PostgreSQL user has a strong password (at least 16 characters, mixed
 
 Never commit `.env` file to Git. Keep it secure with proper permissions:
 ```bash
-chmod 600 /home/ubuntu/single-server-3tier-webapp/backend/.env
+chmod 600 /opt/bmi-app/backend/.env
 ```
 
 ### 12.5 Regular Backups
@@ -986,7 +1404,7 @@ git log -1 --oneline
 
 ```bash
 # Navigate to project directory
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 
 # Fetch latest changes
 git fetch origin main
@@ -1018,7 +1436,7 @@ async function runMigrations() {
       console.log(\`Running migration: \${file}\`);
       const sql = fs.readFileSync(path.join('./migrations', file), 'utf8');
       await client.query(sql);
-      console.log(\`✓ Completed: \${file}\`);
+      console.log(\`ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Completed: \${file}\`);
     }
   } finally {
     client.release();
@@ -1044,13 +1462,13 @@ curl http://localhost:3000/health
 # If you uploaded files manually (via SCP/SFTP)
 
 # Navigate to backend directory
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 
 # Backup current code
-cp -r /home/ubuntu/single-server-3tier-webapp/backend /home/ubuntu/single-server-3tier-webapp/backend.backup.$(date +%Y%m%d_%H%M%S)
+cp -r /opt/bmi-app/backend /opt/bmi-app/backend.backup.$(date +%Y%m%d_%H%M%S)
 
 # Upload new files (from your local machine)
-# scp -i your-key.pem -r ./backend/* ubuntu@YOUR_EC2_IP:/home/ubuntu/single-server-3tier-webapp/backend/
+# scp -i your-key.pem -r ./backend/* ubuntu@YOUR_EC2_IP:/opt/bmi-app/backend/
 
 # On the server, install dependencies
 npm install
@@ -1114,7 +1532,7 @@ curl http://localhost/
 
 ```bash
 # Navigate to backend directory
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 
 # List existing migrations
 ls -la migrations/
@@ -1131,9 +1549,9 @@ for migration in migrations/*.sql; do
     echo "Running $migration..."
     sudo -u postgres psql -d bmidb -f "$migration"
     if [ $? -eq 0 ]; then
-        echo "✓ $migration completed"
+        echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ $migration completed"
     else
-        echo "✗ $migration failed"
+        echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ $migration failed"
         exit 1
     fi
 done
@@ -1182,20 +1600,20 @@ mkdir -p $BACKUP_DIR
 # Step 1: Database backup
 echo "[1/8] Creating database backup..."
 sudo -u postgres pg_dump -Fc bmidb > $BACKUP_DIR/bmidb_$TIMESTAMP.dump
-echo "✓ Database backup created"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Database backup created"
 
 # Step 2: Pull latest code
 echo "[2/8] Pulling latest code..."
 cd $PROJECT_DIR
 git fetch origin main
 git pull origin main
-echo "✓ Code updated"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Code updated"
 
 # Step 3: Update backend dependencies
 echo "[3/8] Installing backend dependencies..."
 cd $PROJECT_DIR/backend
 npm install --production
-echo "✓ Backend dependencies installed"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Backend dependencies installed"
 
 # Step 4: Run database migrations
 echo "[4/8] Running database migrations..."
@@ -1205,36 +1623,36 @@ for migration in migrations/*.sql; do
         sudo -u postgres psql -d bmidb -f "$migration" 2>&1 | grep -v "already exists" || true
     fi
 done
-echo "✓ Migrations completed"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Migrations completed"
 
 # Step 5: Reload backend (zero-downtime)
 echo "[5/8] Reloading backend..."
 pm2 reload bmi-backend --update-env
 sleep 3
-echo "✓ Backend reloaded"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Backend reloaded"
 
 # Step 6: Update frontend dependencies
 echo "[6/8] Installing frontend dependencies..."
 cd $PROJECT_DIR/frontend
 npm install
-echo "✓ Frontend dependencies installed"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Frontend dependencies installed"
 
 # Step 7: Build frontend
 echo "[7/8] Building frontend..."
 npm run build
-echo "✓ Frontend built"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Frontend built"
 
 # Step 8: Deploy frontend
 echo "[8/8] Deploying frontend..."
 sudo cp -r dist/* /var/www/bmi-tracker/
 sudo chown -R www-data:www-data /var/www/bmi-tracker
 sudo chmod -R 755 /var/www/bmi-tracker
-echo "✓ Frontend deployed"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Frontend deployed"
 
 # Reload Nginx
 echo "Reloading Nginx..."
 sudo nginx -t && sudo systemctl reload nginx
-echo "✓ Nginx reloaded"
+echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Nginx reloaded"
 
 # Verify deployment
 echo ""
@@ -1244,23 +1662,23 @@ echo "========================================="
 
 # Check backend
 if pm2 status | grep -q "online"; then
-    echo "✓ Backend: Online"
+    echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Backend: Online"
 else
-    echo "✗ Backend: Error"
+    echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Backend: Error"
 fi
 
 # Check API
 if curl -s http://localhost:3000/health | grep -q "ok"; then
-    echo "✓ API Health Check: Passed"
+    echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ API Health Check: Passed"
 else
-    echo "✗ API Health Check: Failed"
+    echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ API Health Check: Failed"
 fi
 
 # Check frontend
 if [ -f "/var/www/bmi-tracker/index.html" ]; then
-    echo "✓ Frontend Files: Present"
+    echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Frontend Files: Present"
 else
-    echo "✗ Frontend Files: Missing"
+    echo "ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Frontend Files: Missing"
 fi
 
 echo ""
@@ -1287,7 +1705,7 @@ pm2 logs bmi-backend --lines 100
 sudo tail -100 /var/log/nginx/error.log
 
 # 2. Rollback Backend Code
-cd /home/ubuntu/single-server-3tier-webapp/backend
+cd /opt/bmi-app/backend
 
 # Using Git
 git log --oneline -5
@@ -1296,7 +1714,7 @@ npm install
 pm2 reload bmi-backend
 
 # Or restore from backup
-# cp -r /home/ubuntu/single-server-3tier-webapp/backend.backup.TIMESTAMP/* /home/ubuntu/single-server-3tier-webapp/backend/
+# cp -r /opt/bmi-app/backend.backup.TIMESTAMP/* /opt/bmi-app/backend/
 
 # 3. Rollback Database (if schema changed)
 # Restore from backup
@@ -1329,9 +1747,9 @@ echo "========================================="
 echo ""
 echo "1. Backend Process (PM2):"
 if pm2 status | grep -q "bmi-backend.*online"; then
-    echo "   ✓ Backend is running"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Backend is running"
 else
-    echo "   ✗ Backend is not running"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Backend is not running"
 fi
 
 # Check API health
@@ -1339,36 +1757,36 @@ echo ""
 echo "2. API Health Endpoint:"
 HEALTH_RESPONSE=$(curl -s http://localhost:3000/health)
 if echo $HEALTH_RESPONSE | grep -q "ok"; then
-    echo "   ✓ API responding: $HEALTH_RESPONSE"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ API responding: $HEALTH_RESPONSE"
 else
-    echo "   ✗ API not responding properly"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ API not responding properly"
 fi
 
 # Check database connection
 echo ""
 echo "3. Database Connection:"
 if sudo -u postgres psql -d bmidb -c "SELECT 1;" > /dev/null 2>&1; then
-    echo "   ✓ Database accessible"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Database accessible"
 else
-    echo "   ✗ Database connection failed"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Database connection failed"
 fi
 
 # Check Nginx
 echo ""
 echo "4. Nginx Status:"
 if sudo systemctl is-active --quiet nginx; then
-    echo "   ✓ Nginx is running"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Nginx is running"
 else
-    echo "   ✗ Nginx is not running"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Nginx is not running"
 fi
 
 # Check frontend files
 echo ""
 echo "5. Frontend Deployment:"
 if [ -f "/var/www/bmi-tracker/index.html" ]; then
-    echo "   ✓ Frontend files present"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Frontend files present"
 else
-    echo "   ✗ Frontend files missing"
+    echo "   ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Frontend files missing"
 fi
 
 # Check disk space
@@ -1443,7 +1861,7 @@ sudo systemctl start webhook
 sudo ufw allow 9000/tcp
 
 # Configure in GitHub:
-# Repository → Settings → Webhooks → Add webhook
+# Repository ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Settings ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Webhooks ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ Add webhook
 # Payload URL: http://YOUR_EC2_IP:9000/hooks/deploy-bmi-tracker
 # Content type: application/json
 # Secret: YOUR_WEBHOOK_SECRET
@@ -1472,27 +1890,27 @@ crontab -e
 ### 14.10 Update Best Practices
 
 **DO:**
-- ✓ Always create backups before updates
-- ✓ Test updates in development first
-- ✓ Use `pm2 reload` instead of `pm2 restart` (zero-downtime)
-- ✓ Monitor logs after deployment
-- ✓ Keep dependencies updated regularly
-- ✓ Document changes and version numbers
-- ✓ Use Git tags for production releases
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Always create backups before updates
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Test updates in development first
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Use `pm2 reload` instead of `pm2 restart` (zero-downtime)
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Monitor logs after deployment
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Keep dependencies updated regularly
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Document changes and version numbers
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬Å“ Use Git tags for production releases
 
 **DON'T:**
-- ✗ Update directly on production without testing
-- ✗ Skip database backups
-- ✗ Use `pm2 delete` and `pm2 start` (causes downtime)
-- ✗ Forget to run migrations
-- ✗ Leave old backup files accumulating
-- ✗ Update during peak traffic hours
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Update directly on production without testing
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Skip database backups
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Use `pm2 delete` and `pm2 start` (causes downtime)
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Forget to run migrations
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Leave old backup files accumulating
+- ÃƒÂ¢Ã…â€œÃ¢â‚¬â€ Update during peak traffic hours
 
 ### 14.11 Quick Update Commands Reference
 
 ```bash
 # Quick backend update
-cd /home/ubuntu/single-server-3tier-webapp/backend && git pull && npm install && pm2 reload bmi-backend
+cd /opt/bmi-app/backend && git pull && npm install && pm2 reload bmi-backend
 
 # Quick frontend update
 cd /home/ubuntu/single-server-3tier-webapp/frontend && git pull && npm install && npm run build && sudo cp -r dist/* /var/www/bmi-tracker/
@@ -1512,7 +1930,7 @@ pm2 restart bmi-backend && sudo systemctl restart nginx && sudo systemctl restar
 
 ---
 
-## Deployment Complete! 🎉
+## Deployment Complete! ÃƒÂ°Ã…Â¸Ã…Â½Ã¢â‚¬Â°
 
 Your BMI Health Tracker is now live and accessible!
 
@@ -1570,3 +1988,11 @@ psql -U bmi_user -d bmidb -h localhost
 **Version**: 2.1  
 **Changes**: Updated to include measurement_date feature (Migration 002), enhanced testing procedures, and current project state
 
+---
+
+*MD Sarowar Alam*  
+Lead DevOps Engineer, WPP Production  
+ÃƒÂ°Ã…Â¸Ã¢â‚¬Å“Ã‚Â§ Email: sarowar@hotmail.com  
+ÃƒÂ°Ã…Â¸Ã¢â‚¬ÂÃ¢â‚¬â€ LinkedIn: https://www.linkedin.com/in/sarowar/
+
+---

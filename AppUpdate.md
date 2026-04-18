@@ -2,22 +2,32 @@
 
 ## Overview
 
-This guide provides detailed steps for updating your 3-tier BMI Health Tracker web application running at http://54.245.166.96/
+This guide provides detailed steps for updating your 3-tier BMI Health Tracker web application.
+
+> **Recommended**: Use `AppUpdate_AUTO.sh` for routine updates — it handles git pull, backup, dependency install, PM2 restart, frontend build, and health checks automatically:
+> ```bash
+> cd ~/single-server-3tier-webapp
+> ./AppUpdate_AUTO.sh                  # both frontend + backend
+> ./AppUpdate_AUTO.sh --backend-only
+> ./AppUpdate_AUTO.sh --frontend-only
+> ./AppUpdate_AUTO.sh --no-backup      # skip backup, faster
+> ```
+> Use the manual scenarios below when you need fine-grained control.
 
 **Deployment Architecture:**
 - **Backend**: Node.js Express API managed by PM2 (Port 3000, internal only)
 - **Frontend**: React SPA built with Vite, served by Nginx (Port 80/443)
 - **Database**: PostgreSQL
-- **Project Directory**: `/root/single-server-3tier-webapp/`
-- **Git Repository**: `https://github.com/md-sarowar-alam/single-server-3tier-webapp`
+- **Project Directory**: `/home/ubuntu/single-server-3tier-webapp/`
+- **Git Repository**: `https://github.com/sarowar-alam/single-server-3tier-webapp`
 
 ---
 
 ## Prerequisites
 
 Before updating, ensure you have:
-- SSH access to your server: `ssh root@54.245.166.96`
-- Root access on the server (already logged in as root)
+- SSH access to your server: `ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>`
+- SSH key (`.pem` file) for the `ubuntu` user
 - Updated code ready (via Git pull or file upload)
 - Backup of current deployment (optional but recommended)
 
@@ -33,12 +43,12 @@ Before updating, ensure you have:
 
 1. **SSH into the server:**
    ```bash
-   ssh root@54.245.166.96
+   ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>
    ```
 
 2. **Navigate to backend directory:**
    ```bash
-   cd /root/single-server-3tier-webapp/backend
+   cd /home/ubuntu/single-server-3tier-webapp/backend
    ```
 
 3. **Get the latest code:**
@@ -51,7 +61,7 @@ Before updating, ensure you have:
    **Option B - Upload files from local machine:**
    ```bash
    # Run this on your LOCAL machine (PowerShell)
-   scp -r backend/src/* root@54.245.166.96:/root/single-server-3tier-webapp/backend/src/
+   scp -r backend/src/* ubuntu@<YOUR-EC2-IP>:/home/ubuntu/single-server-3tier-webapp/backend/src/
    ```
 
 4. **Install/Update dependencies (if package.json changed):**
@@ -76,7 +86,7 @@ Before updating, ensure you have:
    ```
 
 8. **Check from browser:**
-   - Navigate to http://54.245.166.96/
+   - Navigate to http://<YOUR-EC2-IP>/
    - Test the application functionality
    - Check browser console for errors
 
@@ -96,12 +106,12 @@ Before updating, ensure you have:
 
 1. **SSH into the server:**
    ```bash
-   ssh root@54.245.166.96
+   ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>
    ```
 
 2. **Navigate to frontend directory:**
    ```bash
-   cd /root/single-server-3tier-webapp/frontend
+   cd /home/ubuntu/single-server-3tier-webapp/frontend
    ```
 
 3. **Get the latest code:**
@@ -114,7 +124,7 @@ Before updating, ensure you have:
    **Option B - Upload files from local machine:**
    ```bash
    # Run this on your LOCAL machine (PowerShell)
-   scp -r frontend/src/* root@54.245.166.96:/root/single-server-3tier-webapp/frontend/src/
+   scp -r frontend/src/* ubuntu@<YOUR-EC2-IP>:/home/ubuntu/single-server-3tier-webapp/frontend/src/
    ```
 
 4. **Install/Update dependencies (if package.json changed):**
@@ -130,11 +140,11 @@ Before updating, ensure you have:
    Expected output:
    ```
    vite v5.x.x building for production...
-   ✓ 234 modules transformed.
-   dist/index.html                   0.45 kB │ gzip:  0.30 kB
-   dist/assets/index-a1b2c3d4.js   143.21 kB │ gzip: 46.15 kB
-   dist/assets/index-e5f6g7h8.css   12.34 kB │ gzip:  3.21 kB
-   ✓ built in 3.45s
+   ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ 234 modules transformed.
+   dist/index.html                   0.45 kB ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ gzip:  0.30 kB
+   dist/assets/index-a1b2c3d4.js   143.21 kB ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ gzip: 46.15 kB
+   dist/assets/index-e5f6g7h8.css   12.34 kB ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ gzip:  3.21 kB
+   ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ built in 3.45s
    ```
 
 6. **Verify build output exists:**
@@ -163,7 +173,7 @@ Before updating, ensure you have:
    ```
 
 9. **Test the application:**
-   - Open http://54.245.166.96/ in browser
+   - Open http://<YOUR-EC2-IP>/ in browser
    - **Hard refresh** to clear cache: `Ctrl+F5` (Windows) or `Cmd+Shift+R` (Mac)
    - Test all UI functionality
    - Check browser console for errors
@@ -184,12 +194,12 @@ Before updating, ensure you have:
 
 1. **SSH into the server:**
    ```bash
-   ssh root@54.245.166.96
+   ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>
    ```
 
 2. **Navigate to project root:**
    ```bash
-   cd /root/single-server-3tier-webapp
+   cd /home/ubuntu/single-server-3tier-webapp
    ```
 
 3. **Get the latest code:**
@@ -229,7 +239,7 @@ Before updating, ensure you have:
    ```
 
 7. **Test end-to-end:**
-   - Visit http://54.245.166.96/
+   - Visit http://<YOUR-EC2-IP>/
    - Test all functionality
    - Check both browser console and network tab
 
@@ -266,17 +276,17 @@ Before updating, ensure you have:
 2. **Upload migration file to server:**
    ```bash
    # Run on LOCAL machine
-   scp backend/migrations/003_add_user_preferences.sql root@54.245.166.96:/root/single-server-3tier-webapp/backend/migrations/
+   scp backend/migrations/003_add_user_preferences.sql ubuntu@<YOUR-EC2-IP>:/home/ubuntu/single-server-3tier-webapp/backend/migrations/
    ```
 
 3. **SSH into server:**
    ```bash
-   ssh root@54.245.166.96
+   ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>
    ```
 
 4. **Navigate to backend directory:**
    ```bash
-   cd /root/single-server-3tier-webapp/backend
+   cd /home/ubuntu/single-server-3tier-webapp/backend
    ```
 
 5. **Get database password:**
@@ -333,12 +343,12 @@ Before updating, ensure you have:
 
 1. **SSH into server:**
    ```bash
-   ssh root@54.245.166.96
+   ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>
    ```
 
 2. **Navigate to backend directory:**
    ```bash
-   cd /root/single-server-3tier-webapp/backend
+   cd /home/ubuntu/single-server-3tier-webapp/backend
    ```
 
 3. **Edit the .env file:**
@@ -387,7 +397,7 @@ Before updating, ensure you have:
 
 1. **SSH into server:**
    ```bash
-   ssh root@54.245.166.96
+   ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>
    ```
 
 2. **Edit Nginx configuration:**
@@ -423,7 +433,7 @@ Before updating, ensure you have:
 
 6. **Test the application:**
    ```bash
-   curl -I http://54.245.166.96/
+   curl -I http://<YOUR-EC2-IP>/
    ```
 
 7. **Check Nginx logs if issues:**
@@ -442,12 +452,12 @@ Before updating, ensure you have:
 
 1. **SSH into server:**
    ```bash
-   ssh root@54.245.166.96
+   ssh -i your-key.pem ubuntu@<YOUR-EC2-IP>
    ```
 
 2. **Navigate to project directory:**
    ```bash
-   cd /root/single-server-3tier-webapp
+   cd /home/ubuntu/single-server-3tier-webapp
    ```
 
 3. **Get latest code:**
@@ -473,7 +483,7 @@ Before updating, ensure you have:
 
 6. **Verify deployment:**
    - Check script output for any errors
-   - Visit http://54.245.166.96/
+   - Visit http://<YOUR-EC2-IP>/
    - Test all functionality
 
 #### Important Notes
@@ -521,7 +531,7 @@ pm2 list
 ### Frontend Operations
 ```bash
 # Build frontend
-cd /root/single-server-3tier-webapp/frontend
+cd /home/ubuntu/single-server-3tier-webapp/frontend
 npm run build
 
 # Quick deploy (after build)
@@ -625,7 +635,7 @@ sudo systemctl status pm2-ubuntu
 
 5. Verify environment variables:
    ```bash
-   cat /root/single-server-3tier-webapp/backend/.env
+   cat /home/ubuntu/single-server-3tier-webapp/backend/.env
    ```
 
 6. Check if port 3000 is in use:
@@ -648,7 +658,7 @@ sudo systemctl status pm2-ubuntu
 
 3. Rebuild and redeploy:
    ```bash
-   cd /root/single-server-3tier-webapp/frontend
+   cd /home/ubuntu/single-server-3tier-webapp/frontend
    rm -rf dist/
    npm run build
    sudo rm -rf /var/www/bmi-health-tracker/*
@@ -658,7 +668,7 @@ sudo systemctl status pm2-ubuntu
 
 4. Check Nginx is serving correct files:
    ```bash
-   curl -I http://54.245.166.96/
+   curl -I http://<YOUR-EC2-IP>/
    ```
 
 5. Disable Nginx caching temporarily (add to nginx config):
@@ -683,7 +693,7 @@ sudo systemctl status pm2-ubuntu
 
 3. Verify credentials in `.env`:
    ```bash
-   cat /root/single-server-3tier-webapp/backend/.env
+   cat /home/ubuntu/single-server-3tier-webapp/backend/.env
    ```
 
 4. Check PostgreSQL logs:
@@ -767,13 +777,13 @@ pg_dump -U bmi_user -h localhost bmidb > backup_before_update_$(date +%Y%m%d).sq
 
 # Backup current deployment
 mkdir -p ~/manual_backups
-cp -r /root/single-server-3tier-webapp ~/manual_backups/backup_$(date +%Y%m%d_%H%M%S)
+cp -r /home/ubuntu/single-server-3tier-webapp ~/manual_backups/backup_$(date +%Y%m%d_%H%M%S)
 ```
 
 ### 3. Use Git for Version Control
 ```bash
-# Git is already cloned at /root/single-server-3tier-webapp
-cd /root/single-server-3tier-webapp
+# Git is already cloned at /home/ubuntu/single-server-3tier-webapp
+cd /home/ubuntu/single-server-3tier-webapp
 
 # Pull updates
 git pull origin main
@@ -795,13 +805,13 @@ echo -e "\n=== Backend API Test ==="
 curl -s http://localhost:3000/api/measurements | head -n 5
 
 echo -e "\n=== Frontend Test ==="
-curl -I http://54.245.166.96/ | grep HTTP
+curl -I http://<YOUR-EC2-IP>/ | grep HTTP
 
 echo -e "\n=== Nginx Status ==="
 sudo systemctl status nginx --no-pager -l
 
 echo -e "\n=== Database Connection ==="
-PGPASSWORD=$(grep DB_PASSWORD /root/single-server-3tier-webapp/backend/.env | cut -d= -f2) psql -U bmi_user -d bmidb -h localhost -c "SELECT COUNT(*) FROM measurements;"
+PGPASSWORD=$(grep DB_PASSWORD /home/ubuntu/single-server-3tier-webapp/backend/.env | cut -d= -f2) psql -U bmi_user -d bmidb -h localhost -c "SELECT COUNT(*) FROM measurements;"
 EOF
 
 chmod +x ~/check_health.sh
@@ -811,7 +821,7 @@ chmod +x ~/check_health.sh
 ### 5. Use PM2 Ecosystem File for Consistency
 The project already has `backend/ecosystem.config.js`. To use it:
 ```bash
-cd /root/single-server-3tier-webapp/backend
+cd /home/ubuntu/single-server-3tier-webapp/backend
 pm2 delete all
 pm2 start ecosystem.config.js
 pm2 save
@@ -876,7 +886,7 @@ if [[ "$UPDATE_BACKEND" == "false" && "$UPDATE_FRONTEND" == "false" ]]; then
     exit 1
 fi
 
-PROJECT_DIR="/root/single-server-3tier-webapp"
+PROJECT_DIR="/home/ubuntu/single-server-3tier-webapp"
 
 # Pull latest code
 echo "Pulling latest code from Git..."
@@ -912,7 +922,7 @@ fi
 
 echo
 echo "=== Update Complete ==="
-echo "Application running at: http://54.245.166.96/"
+echo "Application running at: http://<YOUR-EC2-IP>/"
 EOF
 
 chmod +x ~/update_app.sh
@@ -948,7 +958,7 @@ chmod +x ~/update_app.sh
 2. **Secure Environment Variables:**
    ```bash
    # Ensure .env is not readable by others
-   chmod 600 /root/single-server-3tier-webapp/backend/.env
+   chmod 600 /home/ubuntu/single-server-3tier-webapp/backend/.env
    ```
 
 3. **Enable Firewall:**
@@ -973,7 +983,7 @@ chmod +x ~/update_app.sh
 
 ## Support and Resources
 
-- **Project Repository:** https://github.com/md-sarowar-alam/single-server-3tier-webapp
+- **Project Repository:** https://github.com/sarowar-alam/single-server-3tier-webapp
 - **PM2 Documentation:** https://pm2.keymetrics.io/docs/usage/quick-start/
 - **Nginx Documentation:** https://nginx.org/en/docs/
 - **Vite Documentation:** https://vitejs.dev/guide/
@@ -1010,3 +1020,12 @@ This guide covers all common update scenarios for your BMI Health Tracker applic
 5. **Keep dependencies up to date**
 
 For complex issues or questions, refer to the original `IMPLEMENTATION_GUIDE.md` or deployment documentation.
+
+---
+
+*MD Sarowar Alam*  
+Lead DevOps Engineer, WPP Production  
+ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â§ Email: sarowar@hotmail.com  
+ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â LinkedIn: https://www.linkedin.com/in/sarowar/
+
+---

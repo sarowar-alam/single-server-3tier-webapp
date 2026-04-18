@@ -1967,17 +1967,9 @@ Refer to [BMI_Health_Tracker_Deployment_Readme.md](BMI_Health_Tracker_Deployment
 
 ---
 
-## License
-MIT
-
----
-
-**Last Updated**: December 15, 2025
-
----
-## 🧑‍💻 Author
-**Md. Sarowar Alam**  
-Lead DevOps Engineer, Hogarth Worldwide  
+*MD Sarowar Alam*  
+Lead DevOps Engineer, WPP Production  
 📧 Email: sarowar@hotmail.com  
-🔗 LinkedIn: [linkedin.com/in/sarowar](https://www.linkedin.com/in/sarowar/)  
---- 
+🔗 LinkedIn: https://www.linkedin.com/in/sarowar/
+
+---

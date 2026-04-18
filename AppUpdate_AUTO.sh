@@ -3,7 +3,7 @@
 ################################################################################
 # Automated Application Update Script
 # Purpose: Update both frontend and backend from GitHub repository
-# Repository: https://github.com/md-sarowar-alam/single-server-3tier-webapp
+# Repository: https://github.com/sarowar-alam/single-server-3tier-webapp
 # Usage: ./AppUpdate_AUTO.sh [--no-backup] [--backend-only] [--frontend-only]
 ################################################################################
 
@@ -17,13 +17,14 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-PROJECT_DIR="/root/single-server-3tier-webapp"
-BACKEND_DIR="${PROJECT_DIR}/backend"
-FRONTEND_DIR="${PROJECT_DIR}/frontend"
+GIT_DIR="/home/ubuntu/single-server-3tier-webapp"
+APP_DEPLOY_DIR="/opt/bmi-app"
+BACKEND_DIR="${APP_DEPLOY_DIR}/backend"
+FRONTEND_DIR="${GIT_DIR}/frontend"
 NGINX_WEB_ROOT="/var/www/bmi-health-tracker"
 PM2_PROCESS_NAME="bmi-backend"
-GIT_REPO="https://github.com/md-sarowar-alam/single-server-3tier-webapp"
-BACKUP_DIR="/root/backups"
+GIT_REPO="https://github.com/sarowar-alam/single-server-3tier-webapp"
+BACKUP_DIR="/home/ubuntu/backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # Flags
@@ -77,9 +78,10 @@ print_info() {
 
 # Check if running as root
 check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        print_warning "This script should be run as root for full functionality"
-        print_info "Some operations may require sudo"
+    if [[ $EUID -eq 0 ]]; then
+        print_warning "Running as root is not recommended. Run as the ubuntu user instead."
+    else
+        print_info "Running as ubuntu user — sudo will be used for privileged operations."
     fi
 }
 
@@ -98,12 +100,21 @@ check_prerequisites() {
         print_success "NVM loaded"
     fi
     
-    # Check if project directory exists
-    if [ ! -d "$PROJECT_DIR" ]; then
-        print_error "Project directory not found: $PROJECT_DIR"
+    # Check if git repo directory exists
+    if [ ! -d "$GIT_DIR" ]; then
+        print_error "Git repo directory not found: $GIT_DIR"
         all_good=false
     else
-        print_success "Project directory found"
+        print_success "Git repo directory found"
+    fi
+    
+    # Check if deploy directory exists
+    if [ ! -d "$APP_DEPLOY_DIR" ]; then
+        print_warning "Deploy directory not found, creating: $APP_DEPLOY_DIR"
+        sudo mkdir -p "$APP_DEPLOY_DIR"
+        sudo chown -R "$USER:$USER" "$APP_DEPLOY_DIR"
+    else
+        print_success "Deploy directory found"
     fi
     
     # Check if git is installed
@@ -201,12 +212,12 @@ create_backup() {
 pull_latest_code() {
     print_header "Pulling Latest Code from GitHub"
     
-    cd "$PROJECT_DIR"
+    cd "$GIT_DIR"
     
     # Check if directory is a git repository
     if [ ! -d .git ]; then
         print_error "Not a git repository. Please clone the repository first:"
-        print_info "git clone $GIT_REPO $PROJECT_DIR"
+        print_info "git clone $GIT_REPO $GIT_DIR"
         exit 1
     fi
     
@@ -243,6 +254,12 @@ update_backend() {
     fi
     
     print_header "Updating Backend"
+    
+    # Sync updated source from git repo to deploy dir (preserve .env and node_modules)
+    print_info "Syncing backend source from git repo to $APP_DEPLOY_DIR/backend/..."
+    rsync -a --exclude 'node_modules' --exclude '.env' --exclude 'logs' \
+        "$GIT_DIR/backend/" "$APP_DEPLOY_DIR/backend/"
+    print_success "Backend source synced"
     
     cd "$BACKEND_DIR"
     
@@ -307,7 +324,7 @@ update_frontend() {
     
     print_header "Updating Frontend"
     
-    cd "$FRONTEND_DIR"
+    cd "$GIT_DIR/frontend"
     
     # Install dependencies
     print_info "Installing frontend dependencies..."
@@ -344,20 +361,20 @@ update_frontend() {
     print_info "Deploying frontend to Nginx..."
     
     # Create nginx directory if it doesn't exist
-    mkdir -p "$NGINX_WEB_ROOT"
+    sudo mkdir -p "$NGINX_WEB_ROOT"
     
     # Remove old files
     print_info "Removing old frontend files..."
-    rm -rf "${NGINX_WEB_ROOT:?}"/*
+    sudo rm -rf "${NGINX_WEB_ROOT:?}"/*
     
     # Copy new build
     print_info "Copying new build files..."
-    cp -r dist/* "$NGINX_WEB_ROOT/"
+    sudo cp -r dist/* "$NGINX_WEB_ROOT/"
     
     # Set proper permissions
     print_info "Setting permissions..."
-    chown -R www-data:www-data "$NGINX_WEB_ROOT"
-    chmod -R 755 "$NGINX_WEB_ROOT"
+    sudo chown -R www-data:www-data "$NGINX_WEB_ROOT"
+    sudo chmod -R 755 "$NGINX_WEB_ROOT"
     
     print_success "Frontend deployed to Nginx"
     
@@ -456,7 +473,8 @@ display_summary() {
     fi
     
     echo -e "${BLUE}Next Steps:${NC}"
-    echo "  1. Visit your application: http://54.245.166.96/"
+    SERVER_IP=$(curl -s --connect-timeout 2 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo '<YOUR-EC2-IP>')
+    echo "  1. Visit your application: http://${SERVER_IP}/"
     echo "  2. Test all functionality"
     echo "  3. Check backend logs: pm2 logs $PM2_PROCESS_NAME"
     echo "  4. Check frontend in browser console for errors"
@@ -474,7 +492,7 @@ display_summary() {
 display_rollback_info() {
     if [ "$CREATE_BACKUP" = true ] && [ -d "$BACKUP_PATH" ]; then
         echo -e "\n${YELLOW}If you need to rollback:${NC}"
-        echo "  cp -r ${BACKUP_PATH}/backend/* ${BACKEND_DIR}/"
+        echo "  cp -r ${BACKUP_PATH}/backend/* ${APP_DEPLOY_DIR}/backend/"
         echo "  cp -r ${BACKUP_PATH}/nginx_web_root/* ${NGINX_WEB_ROOT}/"
         echo "  pm2 restart $PM2_PROCESS_NAME"
         echo ""
