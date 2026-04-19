@@ -30,8 +30,8 @@ This guide provides detailed instructions for testing database connectivity, bac
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                            NGINX (Reverse Proxy)                        │
 │  • SSL Termination                                                      │
-│  • Static File Serving (/var/www/bmi-tracker/dist)                     │
-│  • API Proxy (Location /api/ → http://localhost:3000)                  │
+│  • Static File Serving (/var/www/bmi-tracker/dist)                      │
+│  • API Proxy (Location /api/ → http://localhost:3000)                   │
 └────────────────┬────────────────────────────────────┬───────────────────┘
                  │                                    │
                  │ Static Files                       │ API Requests
@@ -43,11 +43,11 @@ This guide provides detailed instructions for testing database connectivity, bac
 │  • Served by Nginx          │  │  • PM2 Process Management               │
 │  • Client-side routing      │  │  • CORS Configuration                   │
 └─────────────────────────────┘  │  • Health Endpoint: /health             │
-                                 │  • API Routes:                           │
-                                 │    - POST /api/measurements              │
-                                 │    - GET  /api/measurements              │
-                                 │    - GET  /api/measurements/trends       │
-                                 └────────────────┬─────────────────────────┘
+                                 │  • API Routes:                          │
+                                 │    - POST /api/measurements             │
+                                 │    - GET  /api/measurements             │
+                                 │    - GET  /api/measurements/trends      │
+                                 └────────────────┬────────────────────────┘
                                                   │
                                                   │ SQL Queries
                                                   │ Connection Pool (max: 20)
@@ -79,58 +79,58 @@ This guide provides detailed instructions for testing database connectivity, bac
 └───────────────────────────────────────────────────────────────────────────┘
 
 TEST 1: Database Layer
-┌─────────────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────┐
 │ 1.1 Service Status    → sudo systemctl status postgresql               │
 │ 1.2 Login Test        → psql -U bmi_user -d bmi_tracker                │
 │ 1.3 Table Check       → SELECT * FROM measurements LIMIT 1;            │
 │ 1.4 Connection Pool   → node test-db-connection.js                     │
-└────────────────────────────────┬────────────────────────────────────────┘
+└────────────────────────────────┬───────────────────────────────────────┘
                                  │
                               ✓ PASS
                                  │
                                  ▼
 TEST 2: Backend Layer
-┌─────────────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────┐
 │ 2.1 PM2 Status        → pm2 status                                     │
 │ 2.2 Health Endpoint   → curl http://localhost:3000/health              │
 │ 2.3 GET Measurements  → curl http://localhost:3000/api/measurements    │
 │ 2.4 POST Measurement  → curl -X POST with JSON payload                 │
 │ 2.5 GET Trends        → curl http://localhost:3000/api/measurements/   │
-│                            trends?days=7                                │
-└────────────────────────────────┬────────────────────────────────────────┘
+│                            trends?days=7                               │
+└────────────────────────────────┬───────────────────────────────────────┘
                                  │
                               ✓ PASS
                                  │
                                  ▼
 TEST 3: Nginx Layer
-┌─────────────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────┐
 │ 3.1 Service Status    → sudo systemctl status nginx                    │
 │ 3.2 Config Test       → sudo nginx -t                                  │
 │ 3.3 Static Files      → curl http://localhost/                         │
 │ 3.4 API Proxy         → curl http://localhost/api/measurements         │
-└────────────────────────────────┬────────────────────────────────────────┘
+└────────────────────────────────┬───────────────────────────────────────┘
                                  │
                               ✓ PASS
                                  │
                                  ▼
 TEST 4: Frontend Layer
-┌─────────────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────┐
 │ 4.1 Build Artifacts   → ls -la /var/www/bmi-tracker/dist/              │
 │ 4.2 Public Access     → curl http://<EC2-IP>/                          │
 │ 4.3 HTTPS Access      → curl https://<DOMAIN>/                         │
 │ 4.4 Browser Test      → Open in browser and verify UI                  │
-└────────────────────────────────┬────────────────────────────────────────┘
+└────────────────────────────────┬───────────────────────────────────────┘
                                  │
                               ✓ PASS
                                  │
                                  ▼
 TEST 5: End-to-End Flow
-┌─────────────────────────────────────────────────────────────────────────┐
+┌────────────────────────────────────────────────────────────────────────┐
 │ 5.1 Submit Form       → Enter weight, height, age, sex, activity, date │
 │ 5.2 Verify Storage    → Check data in PostgreSQL table                 │
 │ 5.3 Verify Display    → Confirm measurements appear in UI              │
 │ 5.4 Verify Trends     → Check Chart.js visualization updates           │
-└─────────────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────────────┘
                                  │
                               ✓ ALL TESTS PASSED
                                  │
@@ -1072,3 +1072,12 @@ echo "API Proxy:" && curl -sf http://localhost/api/measurements > /dev/null && e
 **Last Updated**: December 16, 2025  
 **Version**: 1.0  
 **For**: BMI Health Tracker Deployment
+
+---
+
+*MD Sarowar Alam*  
+Lead DevOps Engineer, WPP Production  
+📧 Email: sarowar@hotmail.com  
+🔗 LinkedIn: https://www.linkedin.com/in/sarowar/
+
+---

@@ -18,7 +18,6 @@ A production-ready, full-stack three-tier web application for tracking Body Mass
 - [Monitoring](#monitoring)
 - [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
-- [License](#license)
 
 ## 🎯 Overview
 
@@ -1062,11 +1061,7 @@ ab -n 100 -c 10 http://localhost:3000/api/measurements
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 👨‍💻 Support
+## ‍💻 Support
 
 For issues, questions, or contributions:
 - Review the [Troubleshooting](#troubleshooting) section
@@ -1081,9 +1076,8 @@ For issues, questions, or contributions:
 **Status:** Production Ready ✅
 
 ---
-## 🧑‍💻 Author
-**Md. Sarowar Alam**  
-Lead DevOps Engineer, Hogarth Worldwide  
+*MD Sarowar Alam*  
+Lead DevOps Engineer, WPP Production  
 📧 Email: sarowar@hotmail.com  
-🔗 LinkedIn: [linkedin.com/in/sarowar](https://www.linkedin.com/in/sarowar/)  
+🔗 LinkedIn: https://www.linkedin.com/in/sarowar/
 ---

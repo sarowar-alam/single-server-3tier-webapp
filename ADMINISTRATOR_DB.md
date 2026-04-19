@@ -660,6 +660,12 @@ sudo sh -c 'echo "deb [signed-by=/usr/share/keyrings/packages-pgadmin-org.gpg] h
 sudo apt update
 sudo apt install pgadmin4-web -y
 
+# Optional 
+sudo apt install pgadmin4-web -y \
+  && sudo sed -i 's/^Listen 80$/Listen 8080/' /etc/apache2/ports.conf \
+  && sudo sed -i 's/<VirtualHost \*:80>/<VirtualHost *:8080>/' /etc/apache2/sites-available/000-default.conf
+
+
 # Configure Apache2 to run on port 8080 (to avoid conflict with Nginx on port 80)
 sudo nano /etc/apache2/ports.conf
 

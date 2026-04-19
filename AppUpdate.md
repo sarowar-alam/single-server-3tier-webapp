@@ -611,7 +611,9 @@ pm2 restart bmi-backend --update-env
 
 ---
 
-*MD Sarowar Alam*
-Lead DevOps Engineer, WPP Production
-📧 Email: sarowar@hotmail.com
+*MD Sarowar Alam*  
+Lead DevOps Engineer, WPP Production  
+📧 Email: sarowar@hotmail.com  
 🔗 LinkedIn: https://www.linkedin.com/in/sarowar/
+
+---
